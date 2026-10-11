@@ -1,0 +1,7 @@
+/agentbox
+/dist/
+*.test
+.gocache/
+
+# isolation-test artifacts
+tests/isolation/from-agent

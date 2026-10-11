@@ -1,0 +1,103 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.22"
+
+jobs:
+  # Unit + golden tests: no container engine required (AC 19–21, 15).
+  unit:
+    name: unit + golden
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: vet
+        run: make vet
+      - name: build
+        run: make build
+      - name: unit tests
+        run: make test
+      - name: binary size budget (NFR-2)
+        run: |
+          size=$(stat -c%s agentbox)
+          echo "agentbox binary: $size bytes"
+          test "$size" -le 15728640
+
+  # Isolation acceptance suite on Docker: required check (NFR-6).
+  isolation:
+    name: isolation (docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: build
+        run: make build
+      - name: build images
+        run: make image
+      - name: isolation suite (AC 1–14, 17, 18 + NFR-3)
+        run: AGENTBOX_REQUIRE_ENGINE=1 make test-isolation
+      - name: release check (AC 16, size budgets)
+        run: make release-check
+
+  # Podman smoke: non-blocking until the M2 gate (G4, open decision #6).
+  podman-smoke:
+    name: podman smoke (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          podman info
+      - name: build with podman
+        run: make build && DOCKER=podman make image
+      # The smoke scripts discard engine stderr, so reproduce the failing
+      # checks here with stderr visible (this job is non-blocking until the M2
+      # gate, plan open decision #6).
+      - name: podman diagnostics
+        continue-on-error: true
+        run: |
+          set +e
+          ws=$(mktemp -d)
+          export AGENTBOX_ENGINE=podman
+          run_case() {
+            echo "--- agentbox -c $1"
+            "$PWD/agentbox" "$ws" --agent shell -- -c "$1"
+            echo "exit=$?"
+          }
+          run_case 'pwd'
+          run_case 'test -e "$HOME/.ssh/id_rsa" && echo present || echo absent'
+          run_case 'test -e /var/run/docker.sock && echo present || echo absent'
+          run_case 'echo HOME=$HOME AGENTBOX_HOME=$AGENTBOX_HOME UID=$(id -u)'
+          run_case 'env | grep -E "^(HOME|AGENTBOX)" | sort'
+          run_case 'ls -ld /state /state/home /tmp/agentbox-home 2>&1; tr "\0" " " < /proc/1/cmdline; echo'
+          run_case 'exit 7'
+      - name: boundary + ownership smoke under podman
+        run: |
+          AGENTBOX_ENGINE=podman AGENTBOX_REQUIRE_ENGINE=1 \
+            bash tests/isolation/00-boundary.sh
+          AGENTBOX_ENGINE=podman AGENTBOX_REQUIRE_ENGINE=1 \
+            bash tests/isolation/10-ownership.sh

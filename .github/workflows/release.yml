@@ -1,0 +1,188 @@
+---
+# yamllint disable rule:line-length
+# Release workflow (E3): multi-arch images, immutable tags, NFR-8 manifest.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # The harness images are FROM the base image, so base must be pushed first.
+  base:
+    name: build base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: resolve version
+        id: ver
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # NFR-8: image tags are immutable once published.
+      - name: refuse to overwrite a published tag
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ref="${REGISTRY}/${OWNER}/agentbox-base:${version}"
+          if docker manifest inspect "$ref" >/dev/null 2>&1; then
+            echo "refusing to overwrite published tag: $ref"
+            exit 1
+          fi
+
+      - name: build and push multi-arch base image
+        uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
+        with:
+          context: .
+          file: images/base/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentbox-base:${{ steps.ver.outputs.value }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.value }}
+
+  harnesses:
+    name: build ${{ matrix.harness }}
+    needs: base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - harness: pi
+            dockerfile: images/pi/Dockerfile
+            suffix: "-pi1.1.0"
+          - harness: claude
+            dockerfile: images/claude/Dockerfile
+            suffix: "-claude2.1.296"
+          - harness: opencode
+            dockerfile: images/opencode/Dockerfile
+            suffix: "-opencode2.0.26"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: resolve version
+        id: ver
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: refuse to overwrite a published tag
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ref="${REGISTRY}/${OWNER}/agentbox-${{ matrix.harness }}:${version}${{ matrix.suffix }}"
+          if docker manifest inspect "$ref" >/dev/null 2>&1; then
+            echo "refusing to overwrite published tag: $ref"
+            exit 1
+          fi
+
+      - name: build and push multi-arch harness image
+        uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: >-
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentbox-${{
+            matrix.harness }}:${{ steps.ver.outputs.value }}${{ matrix.suffix }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/agentbox-base:${{ steps.ver.outputs.value }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.value }}
+
+  manifest:
+    name: release manifest
+    needs: [base, harnesses]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: record digests and harness versions (NFR-8)
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          prefix="ghcr.io/${OWNER}/agentbox"
+          digest_of() {
+            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}'
+          }
+          base="${prefix}-base:${version}"
+          pi="${prefix}-pi:${version}-pi1.1.0"
+          claude="${prefix}-claude:${version}-claude2.1.296"
+          opencode="${prefix}-opencode:${version}-opencode2.0.26"
+          base_digest="$(digest_of "$base")"
+          pi_digest="$(digest_of "$pi")"
+          claude_digest="$(digest_of "$claude")"
+          opencode_digest="$(digest_of "$opencode")"
+          cat >release-manifest.json <<JSON
+          {
+            "agentbox_version": "${version}",
+            "git_tag": "${GITHUB_REF_NAME}",
+            "base_image_digest": "${base_digest}",
+            "node_base_digest": "sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20",
+            "debian_base_digest": "sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587",
+            "harness_versions": {
+              "pi": "1.1.0",
+              "claude": "2.1.296",
+              "opencode": "2.0.26"
+            },
+            "images": {
+              "base": {"ref": "${base}", "digest": "${base_digest}"},
+              "pi": {"ref": "${pi}", "digest": "${pi_digest}"},
+              "claude": {"ref": "${claude}", "digest": "${claude_digest}"},
+              "opencode": {"ref": "${opencode}", "digest": "${opencode_digest}"}
+            }
+          }
+          JSON
+          cat release-manifest.json
+
+      - name: create the GitHub release with the manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-manifest.json \
+            --title "agentbox $GITHUB_REF_NAME" \
+            --notes "Multi-arch (linux/amd64, linux/arm64) images published to ghcr.io. Harness versions and image digests are recorded in release-manifest.json (NFR-8). Tags are immutable once published."
