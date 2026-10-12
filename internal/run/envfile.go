@@ -13,9 +13,50 @@ type KV struct {
 	Value string
 }
 
+// reservedEnvPrefixes are key prefixes whose values would reconfigure or
+// execute code through the container-engine CLI: env-file values are merged
+// into the engine child process environment (ChildEnv -> Stdio.Env), so a
+// DOCKER_*/LD_*/AGENTBOX_* key is an engine-process-env trust boundary, not a
+// container variable.
+var reservedEnvPrefixes = []string{
+	"DOCKER_", "LD_", "DYLD_", "AGENTBOX_", "CONTAINERS_", "PODMAN_", "BUILDAH_",
+}
+
+// reservedEnvNames are exact key names with the same engine-process-env trust
+// boundary as reservedEnvPrefixes.
+var reservedEnvNames = map[string]bool{
+	"PATH": true, "HOME": true, "SHELL": true, "ENV": true, "BASH_ENV": true,
+	"IFS": true, "CDPATH": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
+	"XDG_RUNTIME_DIR": true, "REGISTRY_AUTH_FILE": true,
+}
+
+// validEnvName reports whether key is a shell variable name ([A-Za-z_][A-Za-z0-9_]*).
+func validEnvName(key string) bool {
+	for i, r := range key {
+		switch {
+		case r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return key != ""
+}
+
+// reservedEnvName reports whether key would reconfigure the container engine.
+func reservedEnvName(key string) bool {
+	for _, prefix := range reservedEnvPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return reservedEnvNames[key]
+}
+
 // ParseEnvFile reads KEY=value lines (FR-1 P1). Comments (#), blank lines, an
 // optional `export ` prefix, and matching single/double quotes are handled;
-// malformed lines without `=` are skipped.
+// malformed lines without `=` are skipped. Keys are validated against the
+// engine-process-env trust boundary; errors never echo a value.
 func ParseEnvFile(path string) ([]KV, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -25,7 +66,9 @@ func ParseEnvFile(path string) ([]KV, error) {
 
 	var kvs []KV
 	sc := bufio.NewScanner(f)
+	lineNumber := 0
 	for sc.Scan() {
+		lineNumber++
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -38,6 +81,12 @@ func ParseEnvFile(path string) ([]KV, error) {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue
+		}
+		if !validEnvName(key) {
+			return nil, fmt.Errorf("env file %q line %d: key %q is not a valid variable name", path, lineNumber, key)
+		}
+		if reservedEnvName(key) {
+			return nil, fmt.Errorf("env file %q line %d: refusing reserved key %q (it would reconfigure the container engine)", path, lineNumber, key)
 		}
 		value = strings.TrimSpace(value)
 		value = trimQuotes(value)

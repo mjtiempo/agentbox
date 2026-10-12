@@ -36,6 +36,12 @@ quotes handled). `--env-file` paths resolve relative to the invocation CWD.
 - An unset `--env KEY` is skipped with a one-line notice, never passed empty.
 - Values from env files are injected into the agentbox child environment and
   passed as bare `-e KEY`, so they do not appear in argv either.
+- `--env-file` refuses engine-control keys: prefixes `DOCKER_`, `LD_`, `DYLD_`,
+  `AGENTBOX_`, `CONTAINERS_`, `PODMAN_`, `BUILDAH_` and exact names `PATH`,
+  `HOME`, `SHELL`, `ENV`, `BASH_ENV`, `IFS`, `CDPATH`, `XDG_CONFIG_HOME`,
+  `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, `REGISTRY_AUTH_FILE` (invalid names such
+  as `FOO-BAR` are rejected too). Keep env files trusted: their values reach the
+  container-engine child process environment.
 
 ## 3. One-command setup: `agentbox quickstart [harness]`
 

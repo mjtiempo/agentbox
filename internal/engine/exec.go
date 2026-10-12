@@ -79,6 +79,29 @@ func (e *cliEngine) RunStream(ctx context.Context, argv []string, stdio Stdio) (
 	return 1, fmt.Errorf("cannot run %s: %w", argv[0], err)
 }
 
+// redactArgv renders argv for error messages without leaking values passed as
+// "-e"/"--env" KEY=value pairs: the value is replaced with <redacted>, a bare
+// KEY is unchanged, and all other tokens pass through untouched.
+func redactArgv(argv []string) string {
+	out := make([]string, 0, len(argv))
+	for i := 0; i < len(argv); i++ {
+		token := argv[i]
+		if (token == "-e" || token == "--env") && i+1 < len(argv) {
+			out = append(out, token)
+			i++
+			next := argv[i]
+			if key, _, ok := strings.Cut(next, "="); ok {
+				out = append(out, key+"=<redacted>")
+			} else {
+				out = append(out, next)
+			}
+			continue
+		}
+		out = append(out, token)
+	}
+	return strings.Join(out, " ")
+}
+
 // Capture runs a read-only engine command and returns its stdout. Nonzero
 // exits become errors carrying the engine's stderr (callers render one line).
 func Capture(ctx context.Context, e Engine, argv []string) (string, error) {
@@ -92,7 +115,7 @@ func Capture(ctx context.Context, e Engine, argv []string) (string, error) {
 		if msg == "" {
 			msg = fmt.Sprintf("exit status %d", code)
 		}
-		return out.String(), fmt.Errorf("%s %s failed: %s", e.Name(), strings.Join(argv[1:], " "), msg)
+		return out.String(), fmt.Errorf("%s %s failed: %s", e.Name(), redactArgv(argv[1:]), msg)
 	}
 	return out.String(), nil
 }
