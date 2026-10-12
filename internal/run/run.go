@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -283,7 +282,7 @@ func Run(opts Options, host Host) int {
 	// is detected; never contains values. A pre-existing state volume (or a
 	// user-managed --state-dir) may hold a previous in-container login, so a
 	// fresh volume is not counted as a mechanism.
-	if len(ad.CredEnv) > 0 && !opts.DryRun && len(opts.Credentials) == 0 && !opts.Quiet {
+	if len(ad.CredEnv) > 0 && !opts.DryRun && len(opts.Credentials) == 0 && credFromStore == "" && !opts.Quiet {
 		statePossible := false
 		if st != nil {
 			if opts.StateDir != "" {
@@ -478,9 +477,15 @@ func buildEnvironment(ad adapter.Adapter, opts Options, host Host, kvs []KV) ([]
 	if home == "" {
 		home = state.DefaultHome
 	}
+	// The entrypoint's root path drops to AGENTBOX_UID, so --user 0 must ask
+	// for uid/gid 0 explicitly for the "runs as root" warning to hold.
+	uid, gid := host.UID, host.GID
+	if opts.User == "0" || opts.User == "0:0" {
+		uid, gid = 0, 0
+	}
 	envs := []engine.EnvVar{
-		{Name: "AGENTBOX_UID", Value: strconv.Itoa(host.UID), Set: true},
-		{Name: "AGENTBOX_GID", Value: strconv.Itoa(host.GID), Set: true},
+		{Name: "AGENTBOX_UID", Value: strconv.Itoa(uid), Set: true},
+		{Name: "AGENTBOX_GID", Value: strconv.Itoa(gid), Set: true},
 		{Name: "AGENTBOX_HOME", Value: home, Set: true},
 	}
 	envs = append(envs, ad.Env...)
@@ -537,6 +542,11 @@ func credentialMounts(ad adapter.Adapter, files []string) ([]engine.Mount, error
 			continue
 		}
 		seen[f] = true
+		// Every file mounts at the same container target, so a second distinct
+		// file would silently shadow the first.
+		if len(mounts) > 0 {
+			return nil, fmt.Errorf("only one credential file can be mounted at %s; pass a single --credentials file", ad.CredFile)
+		}
 		st, err := os.Stat(f)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -637,6 +647,3 @@ func usage(host Host, msg, remedy string) int {
 	fmt.Fprintf(host.Err, "agentbox: %s\n  \u2192 %s\n", msg, remedy)
 	return usageExit
 }
-
-// filepath is used by main wiring helpers; keep the import honest.
-var _ = filepath.Join
