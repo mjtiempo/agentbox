@@ -166,7 +166,7 @@ Rules:
 - `--env KEY` with `KEY` unset on the host is skipped with a one-line notice, never passed empty. `--env-file` paths resolve relative to the invocation CWD.
 - `--ephemeral` with `--state-dir` is an error. `--agent image:<ref>` together with a conflicting `--image` is an error.
 - Exit code = agent process exit code (128+signal when the agent dies from a signal). agentbox's own failures exit 1 (engine/IO) or 2 (usage); engine-level 125–127 failures are mapped to 1 after the engine error is printed, with 126/127 adding an image/entrypoint-not-found hint (relevant to `image:<ref>`).
-- Signal handling depends on TTY mode. With a TTY (`-it`), Ctrl-C is an input byte forwarded by the engine to the agent's terminal and agentbox never sees it; the agent's own line discipline decides how to react, and cleanup runs after the agent exits. Without a TTY, agentbox forwards SIGINT/SIGTERM to the agent through the engine and waits for the agent to exit; a second SIGINT while the agent is still running force-removes the container and exits 130. SIGTERM/SIGHUP behave like the second SIGINT after a short grace period.
+- Signal handling depends on TTY mode. With a TTY (`-it`), Ctrl-C is an input byte forwarded by the engine to the agent's terminal and agentbox never sees it; the agent's own line discipline decides how to react, and cleanup runs after the agent exits. Without a TTY, agentbox forwards SIGINT/SIGTERM to the agent through the engine and waits for the agent to exit; a second SIGINT while the agent is still running force-removes the container and exits 130 (`--keep` leaves the container in place). SIGTERM/SIGHUP behave like the second SIGINT after a short grace period, also honoring `--keep`.
 - `agentbox` with no TTY input available (`stdin` not a TTY) still runs; no interactive prompt required for defaults. Interactive TUIs require `-it`, which is passed when stdin is a TTY.
 
 ### FR-2 — Workspace mounting
@@ -183,11 +183,11 @@ Rules:
 ### FR-3 — Container lifecycle
 
 - P0: `docker run --rm --init -it` semantics by default (TTY flags conditional on host TTY).
-- P0: Container name generated as `agentbox-<project>-<rand>`; never reused implicitly; the random suffix, run uuid, and owner label are overridable via `AGENTBOX_TEST_NAME` for golden tests. Every container carries `--label agentbox=1 --label agentbox.run=<uuid> --label agentbox.project=<id> --label agentbox.uid=<host uid> --label agentbox.owner=<pid>@<boot-id>`; `run` identifies exactly one invocation and `owner` lets a later startup distinguish a live run from a stale one.
-- P0: On normal exit, SIGINT/SIGTERM, or nonzero agent exit: container is stopped and removed. Verified by acceptance test (no `agentbox-*` containers remain).
-- P0: In TTY mode the container is removed after the agent exits; in non-TTY mode agentbox forwards SIGINT and waits (FR-1). agentbox never kills a live agent to satisfy cleanup.
-- P0: Cleanup does not rely on `--rm` alone. agentbox force-removes only its own container, selected by `agentbox.run=<uuid>` — never the shared `agentbox=1` label — if the agent does not exit within the grace period. At startup, agentbox reaps containers labeled `agentbox.uid=<self>` whose `agentbox.owner` pid+boot-id is no longer alive; this covers SIGKILL and terminal close without ever touching a concurrent run (UC2) or another user's containers.
-- P2: `--keep` for debugging; `--name` implies `--keep` semantics documented clearly (container not auto-removed).
+- P0: Container name generated as `agentbox-<project>-<rand>`; never reused implicitly; the random suffix, run uuid, and owner label are overridable via `AGENTBOX_TEST_NAME` for golden tests. Every container carries `--label agentbox=1 --label agentbox.run=<uuid> --label agentbox.project=<id> --label agentbox.uid=<host uid> --label agentbox.owner=<pid>@<boot-id>`; `run` identifies exactly one invocation and `owner` lets a later startup distinguish a live run from a stale one. Containers started with `--keep` also carry `--label agentbox.keep=1`, which exempts them from the startup sweep.
+- P0: On normal exit, SIGINT/SIGTERM, or nonzero agent exit: container is stopped and removed (unless `--keep`). Verified by acceptance test (no `agentbox-*` containers remain).
+- P0: In TTY mode the container is removed after the agent exits (unless `--keep`); in non-TTY mode agentbox forwards SIGINT and waits (FR-1). agentbox never kills a live agent to satisfy cleanup.
+- P0: Cleanup does not rely on `--rm` alone. agentbox force-removes only its own container, selected by `agentbox.run=<uuid>` — never the shared `agentbox=1` label — if the agent does not exit within the grace period (`--keep` disables this force-remove). At startup, agentbox reaps containers labeled `agentbox.uid=<self>` whose `agentbox.owner` pid+boot-id is no longer alive (`agentbox.keep=1` containers are skipped); this covers SIGKILL and terminal close without ever touching a concurrent run (UC2) or another user's containers.
+- P2: `--keep` for debugging: the container is not auto-removed on exit (the startup sweep and the signal force-remove both leave it in place). `--name` only names the container; it does not imply `--keep` — pair them (`--name box1 --keep`) to keep a named container for inspection.
 - P0: If the engine is unreachable, fail with a one-line remedy (`is the docker daemon running?`), not a raw daemon stack trace.
 
 ### FR-4 — Agent harness adapters
@@ -386,7 +386,7 @@ Each item maps to a test in the repo's test suite (`tests/isolation/`, `tests/cl
 7. Given `--ro`, then `/workspace` writes fail; `--dry-run` output shows `:ro`.
 8. Given no agentbox flags, when run from an ancestor of `$HOME`, then it exits nonzero with the guardrail message.
 
-9. *(lifecycle & state)* After a normal, interrupted (`SIGINT`), or killed (`SIGKILL`) run, no `agentbox-*` container remains; the SIGKILL case is satisfied by the next-startup sweep, which removes only containers owned by this uid whose owner process is dead. Concurrent live sessions (UC2) survive a sweep.
+9. *(lifecycle & state)* After a normal, interrupted (`SIGINT`), or killed (`SIGKILL`) run (without `--keep`), no `agentbox-*` container remains; the SIGKILL case is satisfied by the next-startup sweep, which removes only containers owned by this uid whose owner process is dead and which are not labeled `agentbox.keep=1`. Concurrent live sessions (UC2) survive a sweep.
 10. Given two workspaces A and B, distinct `agentbox-state-<uid>-<hash8>` volumes are used, sessions created in A are not listed when running B, and A's container has no path to B's state (no shared `/state` mount).
 11. Given `--ephemeral`, then no state volume is created and no session persists.
 12. Exit code from the agent (`exit 7`) is returned by `agentbox`.
