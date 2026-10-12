@@ -80,8 +80,9 @@ func (e *cliEngine) RunStream(ctx context.Context, argv []string, stdio Stdio) (
 }
 
 // redactArgv renders argv for error messages without leaking values passed as
-// "-e"/"--env" KEY=value pairs: the value is replaced with <redacted>, a bare
-// KEY is unchanged, and all other tokens pass through untouched.
+// "-e"/"--env" KEY=value pairs (separate or attached): the value is replaced
+// with <redacted>, a bare KEY is unchanged, and all other tokens pass through
+// untouched.
 func redactArgv(argv []string) string {
 	out := make([]string, 0, len(argv))
 	for i := 0; i < len(argv); i++ {
@@ -97,9 +98,27 @@ func redactArgv(argv []string) string {
 			}
 			continue
 		}
+		if key, ok := strings.CutPrefix(token, "--env="); ok {
+			redactAttached(&out, "--env=", key)
+			continue
+		}
+		if strings.HasPrefix(token, "-e") && !strings.HasPrefix(token, "--") {
+			redactAttached(&out, "-e", token[len("-e"):])
+			continue
+		}
 		out = append(out, token)
 	}
 	return strings.Join(out, " ")
+}
+
+// redactAttached rewrites one attached KEY=value token, prefix included; a
+// token without "=" is unchanged.
+func redactAttached(out *[]string, prefix, rest string) {
+	if key, _, ok := strings.Cut(rest, "="); ok {
+		*out = append(*out, prefix+key+"=<redacted>")
+		return
+	}
+	*out = append(*out, prefix+rest)
 }
 
 // Capture runs a read-only engine command and returns its stdout. Nonzero

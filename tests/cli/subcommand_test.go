@@ -18,6 +18,7 @@ import (
 type fakeEngine struct {
 	responses map[string]string
 	calls     []string
+	env       []string
 }
 
 func (f *fakeEngine) Name() string { return "docker" }
@@ -30,6 +31,7 @@ func (f *fakeEngine) Run(context.Context, []string) (int, error)              { 
 func (f *fakeEngine) RunStream(_ context.Context, argv []string, stdio engine.Stdio) (int, error) {
 	key := strings.Join(argv, " ")
 	f.calls = append(f.calls, key)
+	f.env = append([]string{}, stdio.Env...)
 	out, ok := f.responses[key]
 	if !ok {
 		// "~substr" keys match any argv containing the substring.

@@ -15,6 +15,10 @@ func TestRedactArgv(t *testing.T) {
 	}{
 		{"short env flag", []string{"-e", "KEY=secret"}, "-e KEY=<redacted>"},
 		{"long env flag", []string{"--env", "K=v"}, "--env K=<redacted>"},
+		{"attached long env flag", []string{"--env=KEY=secret"}, "--env=KEY=<redacted>"},
+		{"attached short env flag", []string{"-eKEY=secret"}, "-eKEY=<redacted>"},
+		{"attached long env flag without value", []string{"--env=KEY"}, "--env=KEY"},
+		{"attached short env flag without value", []string{"-eKEY"}, "-eKEY"},
 		{"bare key", []string{"-e", "KEY"}, "-e KEY"},
 		{"unrelated tokens", []string{"run", "--rm", "img", "pi"}, "run --rm img pi"},
 		{"full argv", []string{"run", "-e", "KEY=secret"}, "run -e KEY=<redacted>"},

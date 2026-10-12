@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +55,18 @@ func TestCredentialMountsRejectsSecondDistinctFile(t *testing.T) {
 	want := fmt.Sprintf("only one credential file can be mounted at %s; pass a single --credentials file", ad.CredFile)
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestCredentialMountsReportsMissingSecondFile(t *testing.T) {
+	ad := testAdapter(t, "pi")
+	first := writeCredFile(t, "exists.json")
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	_, err := credentialMounts(ad, []string{first, missing})
+	if err == nil {
+		t.Fatal("expected an error for a missing second credential file")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error = %q, want the missing-file message", err.Error())
 	}
 }

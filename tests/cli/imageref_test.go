@@ -111,6 +111,21 @@ func TestBuildWithImageConflict(t *testing.T) {
 	if !strings.Contains(errb.String(), "--build cannot be combined with --image") {
 		t.Errorf("stderr = %q", errb.String())
 	}
+
+	// The conflict must be validated before the dry-run path skips engine work.
+	var out2, errb2 bytes.Buffer
+	host2 := imagerefHost(&out2, &errb2, map[string]string{"AGENTBOX_TEST_NAME": "iso-buildimage"})
+	o2 := baseRunOpts(ws)
+	o2.DryRun = true
+	o2.Build = true
+	o2.Image = "other/img:1"
+	o2.Ephemeral = true
+	if code := run.Run(o2, host2); code != 2 {
+		t.Fatalf("dry-run exit = %d, want 2; stderr = %s", code, errb2.String())
+	}
+	if !strings.Contains(errb2.String(), "--build cannot be combined with --image") {
+		t.Errorf("dry-run stderr = %q", errb2.String())
+	}
 }
 
 func TestUserDryRunKeepsEntrypoint(t *testing.T) {

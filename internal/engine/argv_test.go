@@ -108,6 +108,18 @@ func TestRunArgvOrderingIsFrozen(t *testing.T) {
 	mustIndexAfter(t, argv, "-e", "--entrypoint")
 }
 
+func TestRunArgvKeepOmitsRM(t *testing.T) {
+	s := baseSpec()
+	s.Keep = true
+	if indexOf(engine.NewDocker().RunArgv(s), "--rm") >= 0 {
+		t.Errorf("--keep spec must not add --rm: %v", engine.NewDocker().RunArgv(s))
+	}
+	s.Keep = false
+	if indexOf(engine.NewDocker().RunArgv(s), "--rm") < 0 {
+		t.Errorf("default spec must add --rm: %v", engine.NewDocker().RunArgv(s))
+	}
+}
+
 func TestRunArgvWorkdirAndMounts(t *testing.T) {
 	argv := engine.NewDocker().RunArgv(baseSpec())
 	w := indexOf(argv, "-w")

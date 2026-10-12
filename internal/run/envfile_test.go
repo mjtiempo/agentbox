@@ -47,10 +47,39 @@ func TestParseEnvFileRejectsInvalidNames(t *testing.T) {
 	}
 }
 
+func TestParseEnvFileStripsBOM(t *testing.T) {
+	path := writeEnvFile(t, "\uFEFFFOO=bar\n")
+	kvs, err := ParseEnvFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kvs) != 1 || kvs[0] != (KV{Key: "FOO", Value: "bar"}) {
+		t.Errorf("kvs = %v, want FOO=bar", kvs)
+	}
+}
+
+func TestParseEnvFileExportSeparator(t *testing.T) {
+	path := writeEnvFile(t, "export FOO=bar\nexport\tBAZ=qux\n")
+	kvs, err := ParseEnvFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []KV{{Key: "FOO", Value: "bar"}, {Key: "BAZ", Value: "qux"}}
+	if len(kvs) != len(want) {
+		t.Fatalf("kvs = %v, want %v", kvs, want)
+	}
+	for i := range want {
+		if kvs[i] != want[i] {
+			t.Errorf("kv[%d] = %v, want %v", i, kvs[i], want[i])
+		}
+	}
+}
+
 func TestParseEnvFileRejectsReservedKeys(t *testing.T) {
 	reserved := []string{
 		"DOCKER_HOST", "DOCKER_CONFIG", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES",
-		"AGENTBOX_ENGINE", "CONTAINERS_CONF", "PODMAN_USERNS", "BUILDAH_FORMAT",
+		"AGENTBOX_ENGINE", "CONTAINERS_CONF", "_CONTAINERS_USERNS_CONFIGURED",
+		"PODMAN_USERNS", "BUILDAH_FORMAT", "STORAGE_DRIVER", "STORAGE_OPTS",
 		"PATH", "HOME", "SHELL", "ENV", "BASH_ENV", "IFS", "CDPATH",
 		"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "REGISTRY_AUTH_FILE",
 	}

@@ -37,11 +37,16 @@ quotes handled). `--env-file` paths resolve relative to the invocation CWD.
 - Values from env files are injected into the agentbox child environment and
   passed as bare `-e KEY`, so they do not appear in argv either.
 - `--env-file` refuses engine-control keys: prefixes `DOCKER_`, `LD_`, `DYLD_`,
-  `AGENTBOX_`, `CONTAINERS_`, `PODMAN_`, `BUILDAH_` and exact names `PATH`,
-  `HOME`, `SHELL`, `ENV`, `BASH_ENV`, `IFS`, `CDPATH`, `XDG_CONFIG_HOME`,
-  `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, `REGISTRY_AUTH_FILE` (invalid names such
-  as `FOO-BAR` are rejected too). Keep env files trusted: their values reach the
-  container-engine child process environment.
+  `AGENTBOX_`, `CONTAINERS_`, `_CONTAINERS_`, `PODMAN_`, `BUILDAH_` and exact
+  names `PATH`, `HOME`, `SHELL`, `ENV`, `BASH_ENV`, `IFS`, `CDPATH`,
+  `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, `REGISTRY_AUTH_FILE`,
+  `STORAGE_DRIVER`, `STORAGE_OPTS` (invalid names such as `FOO-BAR` are rejected
+  too). Keep env files trusted: their values reach the container-engine child
+  process environment.
+- Proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and lowercase
+  variants) stay allowed because containers legitimately need them; they also
+  affect the engine's own network path, which is why `--env-file` values must be
+  trusted.
 
 ## 3. One-command setup: `agentbox quickstart [harness]`
 

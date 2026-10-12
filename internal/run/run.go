@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -123,6 +124,12 @@ func Run(opts Options, host Host) int {
 	if strings.HasPrefix(opts.Agent, "image:") && opts.Image != "" {
 		return usage(host, "--agent image:<ref> cannot be combined with --image", "the image reference already names the image")
 	}
+	if opts.Build && opts.Image != "" {
+		return usage(host, "--build cannot be combined with --image", "build the adapter image, or pass --image and drop --build")
+	}
+	if opts.Build && isImageRef(opts.Agent) {
+		return usage(host, "--build cannot be used with --agent image:<ref>", "the image reference already names an image")
+	}
 	if opts.Agent == "" {
 		opts.Agent = "pi"
 	}
@@ -159,7 +166,7 @@ func Run(opts Options, host Host) int {
 	for _, f := range opts.EnvFiles {
 		parsed, err := ParseEnvFile(f)
 		if err != nil {
-			return fail(host, fmt.Sprintf("cannot read --env-file %q", f), "check the path; values are never echoed")
+			return fail(host, err.Error(), "values are never echoed; keys must be [A-Za-z_][A-Za-z0-9_]* and must not reconfigure the container engine")
 		}
 		kvs = append(kvs, parsed...)
 	}
@@ -335,7 +342,7 @@ func Run(opts Options, host Host) int {
 	// FR-9 P1: a fresh named volume is root-owned, and the entrypoint skips
 	// chown when it starts as a non-root user; fail up front with a remedy
 	// instead of a late permission error.
-	if user != "" && user != "0" && user != "0:0" && st != nil && opts.StateDir == "" {
+	if user != "" && !isRootUser(user) && st != nil && opts.StateDir == "" {
 		if !volumeExists(ctx, eng, st.Host) {
 			return usage(host,
 				"--user with a fresh per-project state volume would be unwritable",
@@ -359,14 +366,6 @@ func Run(opts Options, host Host) int {
 
 	// --- image availability (FR-10) ---------------------------------------
 	if opts.Build {
-		if opts.Image != "" {
-			return usage(host, "--build cannot be combined with --image",
-				"build the adapter image, or pass --image and drop --build")
-		}
-		if isImageRef(opts.Agent) {
-			return usage(host, "--build cannot be used with --agent image:<ref>",
-				"the image reference already names an image")
-		}
 		root := findRepoRoot()
 		if root == "" {
 			return fail(host, "--build needs the agentbox source checkout (images/<harness>/Dockerfile)",
@@ -376,7 +375,7 @@ func Run(opts Options, host Host) int {
 			fmt.Fprintf(host.Err, "agentbox: building image %s from %s\n", spec.Image, root)
 		}
 		if err := BuildImage(ctx, eng, ad, opts.Version, root); err != nil {
-			return fail(host, err.Error(), "check the Dockerfile; AGENTBOX_DEBUG=1 shows the engine command")
+			return fail(host, err.Error(), "check the Dockerfile; if the base image is missing run `make image-base`; AGENTBOX_DEBUG=1 shows the engine command")
 		}
 	} else if !imageExists(ctx, eng, spec.Image) {
 		if !opts.Quiet {
@@ -420,6 +419,12 @@ func Run(opts Options, host Host) int {
 
 	done := make(chan struct{})
 	forceRemove := func() {
+		if opts.Keep {
+			// --keep promises the container survives agentbox exiting, including
+			// when the signal path would otherwise force-remove it; the normal
+			// err-path cleanup is guarded the same way.
+			return
+		}
 		_ = RemoveOwn(context.Background(), eng, naming.RunID)
 	}
 	go watchSignals(sigCh,
@@ -464,10 +469,34 @@ func resolveUser(opts Options, host Host, ad adapter.Adapter) (string, int) {
 				"the image has no agentbox entrypoint to prepare state; pass --ephemeral, or --state-dir with a directory owned by your uid")
 		}
 	}
-	if user == "0" || user == "0:0" {
+	if isRootUser(user) {
 		fmt.Fprintln(host.Err, "agentbox: warning: --user 0 runs the agent as root (debug only)")
 	}
 	return user, 0
+}
+
+// isRootUser reports whether a --user value names root, including the
+// "uid:gid" and "name:group" colon forms ("0", "root", "0:<any>",
+// "root:<any>").
+func isRootUser(user string) bool {
+	name, _, _ := strings.Cut(user, ":")
+	return name == "0" || name == "root"
+}
+
+// agentIdentity maps --user to the AGENTBOX_UID/AGENTBOX_GID the entrypoint
+// drops to. Root forms use uid 0 and take the gid from a numeric colon suffix
+// (else 0); non-root values keep the host identity, matching the entrypoint's
+// non-root path.
+func agentIdentity(user string, hostUID, hostGID int) (uid, gid int) {
+	if !isRootUser(user) {
+		return hostUID, hostGID
+	}
+	if _, tail, ok := strings.Cut(user, ":"); ok {
+		if n, err := strconv.Atoi(tail); err == nil && n > 0 {
+			gid = n
+		}
+	}
+	return 0, gid
 }
 
 // buildEnvironment assembles the container env: identity, adapter config,
@@ -477,12 +506,9 @@ func buildEnvironment(ad adapter.Adapter, opts Options, host Host, kvs []KV) ([]
 	if home == "" {
 		home = state.DefaultHome
 	}
-	// The entrypoint's root path drops to AGENTBOX_UID, so --user 0 must ask
-	// for uid/gid 0 explicitly for the "runs as root" warning to hold.
-	uid, gid := host.UID, host.GID
-	if opts.User == "0" || opts.User == "0:0" {
-		uid, gid = 0, 0
-	}
+	// The entrypoint's root path drops to AGENTBOX_UID, so a root --user must
+	// ask for uid/gid 0 explicitly for the "runs as root" warning to hold.
+	uid, gid := agentIdentity(opts.User, host.UID, host.GID)
 	envs := []engine.EnvVar{
 		{Name: "AGENTBOX_UID", Value: strconv.Itoa(uid), Set: true},
 		{Name: "AGENTBOX_GID", Value: strconv.Itoa(gid), Set: true},
@@ -538,26 +564,32 @@ func credentialMounts(ad adapter.Adapter, files []string) ([]engine.Mount, error
 		if f == "" {
 			continue
 		}
-		if seen[f] {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			return nil, fmt.Errorf("cannot resolve credential file %q: %w", f, err)
+		}
+		if seen[abs] {
 			continue
 		}
-		seen[f] = true
+		seen[abs] = true
+		// Validate existence before the single-target check so a later missing
+		// file reports the missing path instead of the shadowing error.
+		st, err := os.Stat(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("credential file %q does not exist", abs)
+			}
+			return nil, fmt.Errorf("cannot read credential file %q (check permissions)", abs)
+		}
+		if st.IsDir() {
+			return nil, fmt.Errorf("credential file %q is a directory, not a file", abs)
+		}
 		// Every file mounts at the same container target, so a second distinct
 		// file would silently shadow the first.
 		if len(mounts) > 0 {
 			return nil, fmt.Errorf("only one credential file can be mounted at %s; pass a single --credentials file", ad.CredFile)
 		}
-		st, err := os.Stat(f)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("credential file %q does not exist", f)
-			}
-			return nil, fmt.Errorf("cannot read credential file %q (check permissions)", f)
-		}
-		if st.IsDir() {
-			return nil, fmt.Errorf("credential file %q is a directory, not a file", f)
-		}
-		mounts = append(mounts, engine.Mount{Host: f, Container: ad.CredFile, ReadOnly: true})
+		mounts = append(mounts, engine.Mount{Host: abs, Container: ad.CredFile, ReadOnly: true})
 	}
 	return mounts, nil
 }

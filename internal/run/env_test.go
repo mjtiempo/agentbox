@@ -37,13 +37,24 @@ func TestBuildEnvironmentDefaultHostIdentity(t *testing.T) {
 
 func TestBuildEnvironmentRootUserIsExplicit(t *testing.T) {
 	ad := testAdapter(t, "pi")
-	for _, user := range []string{"0", "0:0"} {
-		envs, _, _ := buildEnvironment(ad, Options{User: user}, identityHost(1000, 1001), nil)
-		if got, _ := envValue(envs, "AGENTBOX_UID"); got != "0" {
-			t.Errorf("--user %s: AGENTBOX_UID = %q, want 0", user, got)
+	cases := []struct {
+		user             string
+		wantUID, wantGID string
+	}{
+		{"0", "0", "0"},
+		{"0:0", "0", "0"},
+		{"0:1000", "0", "1000"},
+		{"root", "0", "0"},
+		{"root:1000", "0", "1000"},
+		{"root:staff", "0", "0"},
+	}
+	for _, tc := range cases {
+		envs, _, _ := buildEnvironment(ad, Options{User: tc.user}, identityHost(1000, 1001), nil)
+		if got, _ := envValue(envs, "AGENTBOX_UID"); got != tc.wantUID {
+			t.Errorf("--user %s: AGENTBOX_UID = %q, want %q", tc.user, got, tc.wantUID)
 		}
-		if got, _ := envValue(envs, "AGENTBOX_GID"); got != "0" {
-			t.Errorf("--user %s: AGENTBOX_GID = %q, want 0", user, got)
+		if got, _ := envValue(envs, "AGENTBOX_GID"); got != tc.wantGID {
+			t.Errorf("--user %s: AGENTBOX_GID = %q, want %q", tc.user, got, tc.wantGID)
 		}
 	}
 }

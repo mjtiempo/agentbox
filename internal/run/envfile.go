@@ -19,7 +19,7 @@ type KV struct {
 // DOCKER_*/LD_*/AGENTBOX_* key is an engine-process-env trust boundary, not a
 // container variable.
 var reservedEnvPrefixes = []string{
-	"DOCKER_", "LD_", "DYLD_", "AGENTBOX_", "CONTAINERS_", "PODMAN_", "BUILDAH_",
+	"DOCKER_", "LD_", "DYLD_", "AGENTBOX_", "CONTAINERS_", "_CONTAINERS_", "PODMAN_", "BUILDAH_",
 }
 
 // reservedEnvNames are exact key names with the same engine-process-env trust
@@ -28,6 +28,7 @@ var reservedEnvNames = map[string]bool{
 	"PATH": true, "HOME": true, "SHELL": true, "ENV": true, "BASH_ENV": true,
 	"IFS": true, "CDPATH": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 	"XDG_RUNTIME_DIR": true, "REGISTRY_AUTH_FILE": true,
+	"STORAGE_DRIVER": true, "STORAGE_OPTS": true,
 }
 
 // validEnvName reports whether key is a shell variable name ([A-Za-z_][A-Za-z0-9_]*).
@@ -69,11 +70,13 @@ func ParseEnvFile(path string) ([]KV, error) {
 	lineNumber := 0
 	for sc.Scan() {
 		lineNumber++
-		line := strings.TrimSpace(sc.Text())
+		line := strings.TrimSpace(strings.TrimPrefix(sc.Text(), "\uFEFF"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		line = strings.TrimPrefix(line, "export ")
+		if rest, ok := strings.CutPrefix(line, "export"); ok && (strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t")) {
+			line = strings.TrimSpace(rest)
+		}
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
