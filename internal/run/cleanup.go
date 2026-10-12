@@ -16,6 +16,7 @@ type ContainerInfo struct {
 	Owner   string
 	Project string
 	State   string // running|exited|created|...
+	Keep    string // agentbox.keep label; "1" marks an intentionally kept container
 }
 
 // ParseOwner parses the agentbox.owner label `<pid>@<boot-id>`.
@@ -45,10 +46,9 @@ func OwnerAlive(owner, selfBootID string, procAlive func(int) bool) bool {
 	return procAlive(pid)
 }
 
-// ParseContainerList parses tab-separated `ps` output: id, owner label.
 // ParseContainerList parses tab-separated `ps` output. The first two fields
-// are id and owner; project and state are optional so older two-field callers
-// keep working.
+// are id and owner; project, state, and the keep label are optional so older
+// two-field callers keep working.
 func ParseContainerList(out string) []ContainerInfo {
 	var infos []ContainerInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -67,6 +67,9 @@ func ParseContainerList(out string) []ContainerInfo {
 		if len(fields) > 3 {
 			info.State = strings.TrimSpace(fields[3])
 		}
+		if len(fields) > 4 {
+			info.Keep = strings.TrimSpace(fields[4])
+		}
 		infos = append(infos, info)
 	}
 	return infos
@@ -81,7 +84,8 @@ func ListOwnContainers(ctx context.Context, e engine.Engine, uid int) ([]Contain
 		e.Name(), "ps", "-a",
 		"--filter", fmt.Sprintf("label=agentbox.uid=%d", uid),
 		"--format", `{{.ID}}` + "\t" + `{{.Label "agentbox.owner"}}` + "\t" +
-			`{{.Label "agentbox.project"}}` + "\t" + `{{.State}}`,
+			`{{.Label "agentbox.project"}}` + "\t" + `{{.State}}` + "\t" +
+			`{{.Label "agentbox.keep"}}`,
 	})
 	if err != nil {
 		return nil, err
@@ -104,10 +108,14 @@ func RunningProjectRuns(containers []ContainerInfo, project string) int {
 // SweepStale removes containers whose agentbox.owner process is dead
 // (SIGKILL / terminal close recovery, FR-3). It never touches containers with
 // a live owner (concurrent runs, UC2) and never selects by the shared
-// agentbox=1 label.
+// agentbox=1 label. Containers marked agentbox.keep=1 are skipped: an
+// intentionally kept container is not stale even though its owner is gone.
 func SweepStale(ctx context.Context, e engine.Engine, containers []ContainerInfo, selfBootID string, procAlive func(int) bool) ([]string, error) {
 	var removed []string
 	for _, c := range containers {
+		if c.Keep == "1" {
+			continue
+		}
 		if OwnerAlive(c.Owner, selfBootID, procAlive) {
 			continue
 		}

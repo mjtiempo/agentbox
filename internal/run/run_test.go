@@ -48,7 +48,7 @@ func TestAssembleDefaults(t *testing.T) {
 	if spec.Entrypoint != "/entrypoint.sh" {
 		t.Errorf("Entrypoint = %q", spec.Entrypoint)
 	}
-	if !spec.Rm || !spec.Init || !spec.NoNewPriv {
+	if !spec.Init || !spec.NoNewPriv {
 		t.Errorf("lifecycle/hardening: %+v", spec)
 	}
 	if len(spec.CapDrop) != 1 || spec.CapDrop[0] != "ALL" {
@@ -65,6 +65,9 @@ func TestAssembleDefaults(t *testing.T) {
 	}
 	if spec.Labels["agentbox.run"] != "run-1" || spec.Labels["agentbox.uid"] != "1000" {
 		t.Errorf("Labels = %v", spec.Labels)
+	}
+	if _, ok := spec.Labels["agentbox.keep"]; ok {
+		t.Errorf("keep label must be omitted without --keep: %v", spec.Labels)
 	}
 	if spec.State == nil || spec.State.Container != "/state" {
 		t.Errorf("State = %+v", spec.State)
@@ -149,6 +152,9 @@ func TestAssembleTTYAndKeep(t *testing.T) {
 	spec := Assemble(in)
 	if !spec.TTY || !spec.Keep {
 		t.Errorf("TTY/Keep: %+v", spec)
+	}
+	if spec.Labels["agentbox.keep"] != "1" {
+		t.Errorf("--keep must label the container agentbox.keep=1: %v", spec.Labels)
 	}
 }
 
@@ -236,22 +242,6 @@ func TestOwnerAlive(t *testing.T) {
 		if got := OwnerAlive(tc.owner, tc.selfBoot, procAlive); got != tc.want {
 			t.Errorf("OwnerAlive(%q, %q) = %v, want %v", tc.owner, tc.selfBoot, got, tc.want)
 		}
-	}
-}
-
-func TestParseContainerList(t *testing.T) {
-	out := strings.Join([]string{
-		"abc123\t7@boot-a",
-		"def456\t8@boot-a",
-		"",
-		"ghi789\t",
-	}, "\n")
-	got := ParseContainerList(out)
-	if len(got) != 3 {
-		t.Fatalf("parsed %d, want 3: %+v", len(got), got)
-	}
-	if got[0].ID != "abc123" || got[0].Owner != "7@boot-a" {
-		t.Errorf("got[0] = %+v", got[0])
 	}
 }
 

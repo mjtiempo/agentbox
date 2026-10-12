@@ -360,6 +360,10 @@ func Run(opts Options, host Host) int {
 
 	// --- image availability (FR-10) ---------------------------------------
 	if opts.Build {
+		if opts.Image != "" {
+			return usage(host, "--build cannot be combined with --image",
+				"build the adapter image, or pass --image and drop --build")
+		}
 		if isImageRef(opts.Agent) {
 			return usage(host, "--build cannot be used with --agent image:<ref>",
 				"the image reference already names an image")

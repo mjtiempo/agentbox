@@ -91,8 +91,17 @@ func TestBuildImageFailureIsReported(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "images", "pi", "Dockerfile"), []byte("FROM scratch\n"), 0o644)
 	pi, _ := adapter.Get("pi", "0.1.0")
 	e := &buildFakeEngine{failBuild: true}
-	if err := BuildImage(context.Background(), e, pi, "0.1.0", root); err == nil {
+	err := BuildImage(context.Background(), e, pi, "0.1.0", root)
+	if err == nil {
 		t.Fatal("expected build failure")
+	}
+	// The wrapped engine error must survive: the fake exits nonzero with no
+	// stderr, which Capture renders as "exit status 1".
+	if !strings.Contains(err.Error(), "image build failed for agentbox-pi:0.1.0-pi1.1.0") {
+		t.Errorf("err must name the image: %v", err)
+	}
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Errorf("err must wrap the engine error: %v", err)
 	}
 }
 

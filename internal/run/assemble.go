@@ -55,6 +55,11 @@ func Assemble(in SpecInput) engine.RunSpec {
 	if in.Ephemeral {
 		state = nil
 	}
+	labels := in.Naming.Labels(in.UID)
+	if in.Keep {
+		// Marked so the next run's startup sweep leaves it alone (FR-3).
+		labels["agentbox.keep"] = "1"
+	}
 	return engine.RunSpec{
 		Name:       in.Naming.Name,
 		Image:      in.Image,
@@ -63,7 +68,6 @@ func Assemble(in SpecInput) engine.RunSpec {
 		Workspace:  engine.Mount{Host: in.Workspace, Container: workdir, ReadOnly: in.ReadOnly, Relabel: in.Relabel},
 		State:      state,
 		Net:        in.Net,
-		Rm:         true,
 		Workdir:    workdir,
 		CapDrop:    []string{"ALL"},
 		CapAdd:     []string{"CHOWN", "SETUID", "SETGID"},
@@ -77,7 +81,7 @@ func Assemble(in SpecInput) engine.RunSpec {
 		User:       in.User,
 		Userns:     in.Userns,
 		ReadOnly:   in.ReadOnly,
-		Labels:     in.Naming.Labels(in.UID),
+		Labels:     labels,
 		Keep:       in.Keep,
 		Entrypoint: entry,
 	}

@@ -29,7 +29,7 @@ func BuildImage(ctx context.Context, e engine.Engine, ad adapter.Adapter, agentb
 	}
 	argv = append(argv, repoRoot)
 	if _, err := engine.Capture(ctx, e, argv); err != nil {
-		return fmt.Errorf("image build failed for %s", ad.Image)
+		return fmt.Errorf("image build failed for %s: %w", ad.Image, err)
 	}
 	return nil
 }

@@ -77,7 +77,6 @@ type RunSpec struct {
 	// RunSpec gained this field in Wave 2 for FR-6 P1 credential mounts.
 	ExtraMounts []Mount
 	Net         string   // bridge|none|host
-	Rm          bool     // always true (FR-3) until --keep (P2)
 	Workdir     string   // "/workspace" (FR-2) until --workdir-path (P2)
 	CapDrop     []string // ["ALL"] (FR-8)
 	CapAdd      []string // ["CHOWN","SETUID","SETGID"] (FR-8/FR-9); each rendered as its own --cap-add

@@ -91,6 +91,28 @@ func TestImageRefWithImageConflict(t *testing.T) {
 	}
 }
 
+func TestBuildWithImageConflict(t *testing.T) {
+	ws := t.TempDir()
+	var out, errb bytes.Buffer
+	host := imagerefHost(&out, &errb, map[string]string{"AGENTBOX_TEST_NAME": "iso-buildimage"})
+	e := &fakeEngine{responses: map[string]string{
+		"~ps": "",
+	}}
+	o := baseRunOpts(ws)
+	o.DryRun = false
+	o.Build = true
+	o.Image = "other/img:1"
+	o.Ephemeral = true
+	o.EngineInstance = e
+	code := run.Run(o, host)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr = %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "--build cannot be combined with --image") {
+		t.Errorf("stderr = %q", errb.String())
+	}
+}
+
 func TestUserDryRunKeepsEntrypoint(t *testing.T) {
 	ws := t.TempDir()
 	var out, errb bytes.Buffer

@@ -27,7 +27,6 @@ func goldenSpec() engine.RunSpec {
 		Workspace: engine.Mount{Host: "/home/me/src/app", Container: "/workspace"},
 		State:     &engine.Mount{Host: "agentbox-state-1000-1a2b3c4d", Container: "/state"},
 		Net:       "bridge",
-		Rm:        true,
 		Workdir:   "/workspace",
 		CapDrop:   []string{"ALL"},
 		CapAdd:    []string{"CHOWN", "SETUID", "SETGID"},
