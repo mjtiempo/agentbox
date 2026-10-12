@@ -213,6 +213,62 @@ func TestCopySkipsExistingWithoutForce(t *testing.T) {
 	}
 }
 
+func TestCopyDoesNotWriteThroughSymlink(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "settings.json"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "agents", "pi")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(target, "settings.json")
+	if err := os.Symlink(sentinel, dst); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without force an existing destination (symlink included) is skipped.
+	res, err := userconfig.Copy(target, src, mustAdapter(t, "pi"), false)
+	if err != nil {
+		t.Fatalf("Copy without force: %v", err)
+	}
+	if !contains(res.Skipped, "settings.json") {
+		t.Errorf("Entries = %v Skipped = %v, want settings.json skipped", res.Entries, res.Skipped)
+	}
+	if st, err := os.Lstat(dst); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("non-force copy touched the destination symlink: %v %v", st, err)
+	}
+
+	// With force the symlink is replaced by a regular file holding the source
+	// content, and the sentinel it pointed at is untouched.
+	res, err = userconfig.Copy(target, src, mustAdapter(t, "pi"), true)
+	if err != nil {
+		t.Fatalf("Copy force: %v", err)
+	}
+	if !contains(res.Entries, "settings.json") {
+		t.Errorf("Entries = %v, want settings.json", res.Entries)
+	}
+	st, err := os.Lstat(dst)
+	if err != nil {
+		t.Fatalf("destination missing after force copy: %v", err)
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("destination is still a symlink after force copy")
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil || string(got) != "new" {
+		t.Errorf("destination content = %q err %v, want %q", got, err, "new")
+	}
+	sentinelGot, err := os.ReadFile(sentinel)
+	if err != nil || string(sentinelGot) != "sentinel" {
+		t.Errorf("sentinel changed to %q err %v, want %q", sentinelGot, err, "sentinel")
+	}
+}
+
 func TestCopyMergesIntoPreCreatedDirs(t *testing.T) {
 	// After a first run the standard dirs exist but are empty; config copy
 	// must merge into them instead of skipping them.

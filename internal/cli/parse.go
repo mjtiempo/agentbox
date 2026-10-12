@@ -162,17 +162,10 @@ func (o *Options) applyLong(name, val string, hasVal bool, rest []string) (int, 
 			}
 			return usagef("invalid --net value %q (valid: bridge, none, host)", v)
 		},
-		"cpus":   func(v string) error { o.CPUs = v; return nil },
-		"memory": func(v string) error { o.Memory = v; return nil },
-		"user":   func(v string) error { o.User = v; return nil },
-		"engine": func(v string) error {
-			switch v {
-			case "docker", "podman":
-				o.Engine = v
-				return nil
-			}
-			return usagef("invalid --engine value %q (valid: docker, podman)", v)
-		},
+		"cpus":         func(v string) error { o.CPUs = v; return nil },
+		"memory":       func(v string) error { o.Memory = v; return nil },
+		"user":         func(v string) error { o.User = v; return nil },
+		"engine":       o.setEngine,
 		"name":         func(v string) error { o.Name = v; return nil },
 		"workdir-path": func(v string) error { o.WorkdirPath = v; return nil },
 		"config":       func(v string) error { o.Config = v; return nil },
@@ -239,6 +232,18 @@ func (o *Options) applyLong(name, val string, hasVal bool, rest []string) (int, 
 	}
 	o.mark(name)
 	return 0, nil
+}
+
+// setEngine validates and stores an --engine value. applyLong and
+// parseSubcommand share it so both positions accept the same values with the
+// same error text.
+func (o *Options) setEngine(v string) error {
+	switch v {
+	case "docker", "podman":
+		o.Engine = v
+		return nil
+	}
+	return usagef("invalid --engine value %q (valid: docker, podman)", v)
 }
 
 func (o *Options) mark(name string) {
@@ -332,6 +337,19 @@ func (o *Options) parseSubcommand(cmd string, args []string) (*Options, error) {
 			i += 2
 		case strings.HasPrefix(a, "--from="):
 			o.From = strings.TrimPrefix(a, "--from=")
+			i++
+		case a == "--engine":
+			if i+1 >= len(args) || looksLikeFlag(args[i+1]) {
+				return nil, usageHintf("pass it as `--engine <value>`", "--engine requires a value")
+			}
+			if err := o.setEngine(args[i+1]); err != nil {
+				return nil, err
+			}
+			i += 2
+		case strings.HasPrefix(a, "--engine="):
+			if err := o.setEngine(strings.TrimPrefix(a, "--engine=")); err != nil {
+				return nil, err
+			}
 			i++
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			return nil, unknownFlag(a)

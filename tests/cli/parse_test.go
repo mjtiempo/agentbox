@@ -322,6 +322,39 @@ func TestSubcommandValidation(t *testing.T) {
 	}
 }
 
+func TestSubcommandEngineFlag(t *testing.T) {
+	// --engine is read by state/doctor, so it must be accepted after a
+	// subcommand as well as before it.
+	o := mustParse(t, "state", "ls", "--engine", "podman")
+	if o.Engine != "podman" {
+		t.Errorf("state ls --engine podman: Engine = %q", o.Engine)
+	}
+	if o.Command != "state" || !reflect.DeepEqual(o.SubArgs, []string{"ls"}) {
+		t.Errorf("state ls parse wrong: %+v", o)
+	}
+	o = mustParse(t, "doctor", "--engine=podman")
+	if o.Engine != "podman" || o.Command != "doctor" {
+		t.Errorf("doctor --engine=podman parse wrong: %+v", o)
+	}
+	// The global form before the subcommand keeps working.
+	o = mustParse(t, "--engine", "docker", "state", "ls")
+	if o.Engine != "docker" || o.Command != "state" {
+		t.Errorf("--engine docker state ls parse wrong: %+v", o)
+	}
+	// Invalid value is a usage error with the shared validation text.
+	for _, args := range [][]string{{"state", "ls", "--engine", "rkt"}, {"doctor", "--engine=rkt"}} {
+		ue := wantUsageError(t, args...)
+		if !strings.Contains(ue.Msg, `invalid --engine value "rkt" (valid: docker, podman)`) {
+			t.Errorf("args %v: Msg = %q", args, ue.Msg)
+		}
+	}
+	// A value-less --engine errors like the top-level form.
+	ue := wantUsageError(t, "state", "ls", "--engine")
+	if !strings.Contains(ue.Msg, "requires a value") {
+		t.Errorf("value-less --engine: Msg = %q", ue.Msg)
+	}
+}
+
 func TestConfigFromFlag(t *testing.T) {
 	o := mustParse(t, "config", "link", "--from", "/tmp/cfg")
 	if o.From != "/tmp/cfg" {

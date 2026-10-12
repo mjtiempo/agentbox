@@ -291,6 +291,13 @@ func copyFile(src, dst string, perm os.FileMode) error {
 		return err
 	}
 	defer in.Close()
+	// Never write through a destination symlink: force replaces the link with a
+	// fresh regular file, leaving whatever it pointed at untouched.
+	if st, err := os.Lstat(dst); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dst); err != nil {
+			return err
+		}
+	}
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
 	if err != nil {
 		return err
